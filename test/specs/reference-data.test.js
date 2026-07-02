@@ -153,9 +153,10 @@ describe('Reference Data API Tests', function () {
             const codes = response.data.values.map((v) => v.code)
             // The sort order of reference data is determined by a static JSON file in the
             // application repository. Because this test suite cannot be certain of that
-            // exact ordering, we verify that the newly added 'CL' (Common Land) is returned
-            // as the last option in the list.
-            expect(codes[codes.length - 1]).to.equal('CL')
+            // exact ordering, we verify that the newly added 'CL' (Common Land) and 'PO'/'PT' (Port)
+            // are returned at the end of the list.
+            expect(codes[codes.length - 2]).to.equal('CL')
+            expect(codes[codes.length - 1]).to.be.oneOf(['PO', 'PT'])
           } else if (
             endpoint === 'roles' ||
             endpoint === 'activities' ||
