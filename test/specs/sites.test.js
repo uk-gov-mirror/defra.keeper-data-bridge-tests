@@ -17,7 +17,7 @@ import {
 import FileProcessor from '../helpers/file-processor.js'
 
 describe('sites API Test', function () {
-  this.timeout(180000)
+  this.timeout(300000)
 
   let processor
   let lastUpdatedTimePoint
@@ -31,6 +31,7 @@ describe('sites API Test', function () {
     // 1. Clean collections
     await cleanCollection(TEST_KEEPER_DATA_BRIDGE_URL, 'sam_cph_holdings')
     await cleanCollection(TEST_KEEPER_DATA_BRIDGE_URL, 'amls2_common_land')
+    await cleanCollection(TEST_KEEPER_DATA_BRIDGE_URL, 'sam_showground')
 
     // 2. Clean storage files once at the beginning
     await cleanInternalStorageFiles(TEST_KEEPER_DATA_BRIDGE_URL, {
@@ -49,6 +50,9 @@ describe('sites API Test', function () {
     )
     const portFileName = Array.from(processor.processedFiles.keys()).find((f) =>
       f.includes('AMLS2PORT')
+    )
+    const showgroundFileName = Array.from(processor.processedFiles.keys()).find(
+      (f) => f.includes('SAMSHOWGROUND')
     )
 
     // 4. Import SAMCPHHOLDING sequentially
@@ -96,13 +100,28 @@ describe('sites API Test', function () {
       )
     }
 
+    // 6a. Import SAMSHOWGROUND sequentially
+    if (showgroundFileName) {
+      await uploadEncryptedFile(
+        TEST_KEEPER_DATA_BRIDGE_URL,
+        showgroundFileName,
+        processor.getEncryptedFile(showgroundFileName)
+      )
+      const importRes = await startImport(TEST_KEEPER_DATA_BRIDGE_URL)
+      expect(importRes.status).to.be.oneOf([200, 202])
+      await waitForImportCompletion(
+        TEST_KEEPER_DATA_BRIDGE_URL,
+        importRes.data.importId
+      )
+    }
+
     // 7. Trigger Daily Scan
     const response = await startSamDailyScanImport(TEST_KEEPER_DATA_API_URL)
     expect(response.status).to.equal(202)
 
-    // Poll to ensure both common land data, standard site mappings, and port data are fully synced in the read-side API database
+    // Poll to ensure both common land data, standard site mappings, port data, and showground data are fully synced in the read-side API database
     const startTime = Date.now()
-    const timeout = 60000
+    const timeout = 150000
     let isSynced = false
     while (Date.now() - startTime < timeout) {
       const standardRes = await getSitesList(TEST_KEEPER_DATA_API_URL, {
@@ -114,13 +133,18 @@ describe('sites API Test', function () {
       const portRes = await getSitesList(TEST_KEEPER_DATA_API_URL, {
         SiteIdentifier: 'ABRDD'
       })
+      const showgroundRes = await getSitesList(TEST_KEEPER_DATA_API_URL, {
+        SiteIdentifier: '02/073/8101'
+      })
       const standardSite = standardRes.data?.values?.[0]
       const commonSite = commonRes.data?.values?.[0]
       const portSite = portRes.data?.values?.[0]
+      const showgroundSite = showgroundRes.data?.values?.[0]
       if (
         standardSite?.associatedCommonLands?.length === 2 &&
         commonSite?.associatedMainHoldings?.length === 2 &&
-        portSite?.name === 'Aberdeen Docks'
+        portSite?.name === 'Aberdeen Docks' &&
+        showgroundSite?.name === 'Remenham Barn'
       ) {
         isSynced = true
         break
@@ -581,6 +605,133 @@ describe('sites API Test', function () {
       expect(details.location.address.postcode).to.equal('AB11 5SS')
       expect(details.location.easting).to.equal(394400)
       expect(details.location.northing).to.equal(806100)
+    })
+  })
+
+  describe('Showground Requirements', () => {
+    it('Scenario 1: should return showground details with approvalCurrentFlag true when both dates are null', async () => {
+      const cph = '02/073/8101'
+      const listResponse = await getSitesList(TEST_KEEPER_DATA_API_URL, {
+        SiteIdentifier: cph
+      })
+      expect(listResponse.status).to.equal(200)
+      expect(listResponse.data.values).to.be.an('array')
+      expect(listResponse.data.values.length).to.be.greaterThan(0)
+
+      const siteData = listResponse.data.values[0]
+      expect(siteData.name).to.equal('Remenham Barn')
+      expect(siteData.type).to.be.an('object')
+      expect(siteData.type.code).to.equal('SG')
+      expect(siteData.type.name).to.equal('Showground')
+      expect(siteData.effectiveFromDate).to.be.oneOf([null, undefined])
+      expect(siteData.effectiveToDate).to.be.oneOf([null, undefined])
+      expect(siteData.approvalCurrentFlag).to.equal(true)
+
+      const detailResponse = await getSiteDetailsById(
+        TEST_KEEPER_DATA_API_URL,
+        siteData.id
+      )
+      expect(detailResponse.status).to.equal(200)
+      const details = detailResponse.data
+      expect(details.name).to.equal('Remenham Barn')
+      expect(details.type).to.be.an('object')
+      expect(details.type.code).to.equal('SG')
+      expect(details.type.name).to.equal('Showground')
+      expect(details.effectiveFromDate).to.be.oneOf([null, undefined])
+      expect(details.effectiveToDate).to.be.oneOf([null, undefined])
+      expect(details.approvalCurrentFlag).to.equal(true)
+    })
+
+    it('Scenario 2: should return showground details with approvalCurrentFlag true when start date is in past and end date is null', async () => {
+      const cph = '07/010/8106'
+      const listResponse = await getSitesList(TEST_KEEPER_DATA_API_URL, {
+        SiteIdentifier: cph
+      })
+      expect(listResponse.status).to.equal(200)
+      const siteData = listResponse.data.values[0]
+      expect(siteData.name).to.equal('Stithians Showground')
+      expect(siteData.type).to.be.an('object')
+      expect(siteData.type.code).to.equal('SG')
+      expect(siteData.type.name).to.equal('Showground')
+      expect(siteData.approvalCurrentFlag).to.equal(true)
+      expect(siteData.effectiveFromDate).to.be.a('string')
+      expect(new Date(siteData.effectiveFromDate).getFullYear()).to.equal(2026)
+      expect(siteData.effectiveToDate).to.be.oneOf([null, undefined])
+
+      const detailResponse = await getSiteDetailsById(
+        TEST_KEEPER_DATA_API_URL,
+        siteData.id
+      )
+      expect(detailResponse.status).to.equal(200)
+      const details = detailResponse.data
+      expect(details.type).to.be.an('object')
+      expect(details.type.code).to.equal('SG')
+      expect(details.type.name).to.equal('Showground')
+      expect(details.approvalCurrentFlag).to.equal(true)
+      expect(new Date(details.effectiveFromDate).getFullYear()).to.equal(2026)
+      expect(details.effectiveToDate).to.be.oneOf([null, undefined])
+    })
+
+    it('Scenario 3: should return showground details with approvalCurrentFlag true when start date is in past and end date is in future', async () => {
+      const cph = '05/350/8000'
+      const listResponse = await getSitesList(TEST_KEEPER_DATA_API_URL, {
+        SiteIdentifier: cph
+      })
+      expect(listResponse.status).to.equal(200)
+      const siteData = listResponse.data.values[0]
+      expect(siteData.name).to.equal('EAST OF ENGLAND SHOWGROUND')
+      expect(siteData.type).to.be.an('object')
+      expect(siteData.type.code).to.equal('SG')
+      expect(siteData.type.name).to.equal('Showground')
+      expect(siteData.approvalCurrentFlag).to.equal(true)
+      expect(siteData.effectiveFromDate).to.be.a('string')
+      expect(siteData.effectiveToDate).to.be.a('string')
+      expect(new Date(siteData.effectiveFromDate).getFullYear()).to.equal(2026)
+      expect(new Date(siteData.effectiveToDate).getFullYear()).to.equal(2026)
+
+      const detailResponse = await getSiteDetailsById(
+        TEST_KEEPER_DATA_API_URL,
+        siteData.id
+      )
+      expect(detailResponse.status).to.equal(200)
+      const details = detailResponse.data
+      expect(details.type).to.be.an('object')
+      expect(details.type.code).to.equal('SG')
+      expect(details.type.name).to.equal('Showground')
+      expect(details.approvalCurrentFlag).to.equal(true)
+      expect(new Date(details.effectiveFromDate).getFullYear()).to.equal(2026)
+      expect(new Date(details.effectiveToDate).getFullYear()).to.equal(2026)
+    })
+
+    it('Scenario 4: should return showground details with approvalCurrentFlag false when end date is in past', async () => {
+      const cph = '06/187/8005'
+      const listResponse = await getSitesList(TEST_KEEPER_DATA_API_URL, {
+        SiteIdentifier: cph
+      })
+      expect(listResponse.status).to.equal(200)
+      const siteData = listResponse.data.values[0]
+      expect(siteData.name).to.equal('Beeston Cattle Auction')
+      expect(siteData.type).to.be.an('object')
+      expect(siteData.type.code).to.equal('SG')
+      expect(siteData.type.name).to.equal('Showground')
+      expect(siteData.approvalCurrentFlag).to.equal(false)
+      expect(siteData.effectiveFromDate).to.be.a('string')
+      expect(siteData.effectiveToDate).to.be.a('string')
+      expect(new Date(siteData.effectiveFromDate).getFullYear()).to.equal(2025)
+      expect(new Date(siteData.effectiveToDate).getFullYear()).to.equal(2025)
+
+      const detailResponse = await getSiteDetailsById(
+        TEST_KEEPER_DATA_API_URL,
+        siteData.id
+      )
+      expect(detailResponse.status).to.equal(200)
+      const details = detailResponse.data
+      expect(details.type).to.be.an('object')
+      expect(details.type.code).to.equal('SG')
+      expect(details.type.name).to.equal('Showground')
+      expect(details.approvalCurrentFlag).to.equal(false)
+      expect(new Date(details.effectiveFromDate).getFullYear()).to.equal(2025)
+      expect(new Date(details.effectiveToDate).getFullYear()).to.equal(2025)
     })
   })
 })
