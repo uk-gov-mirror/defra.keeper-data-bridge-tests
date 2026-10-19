@@ -1,4 +1,10 @@
-keeper-data-bridge-tests
+> [!WARNING]
+> **DEPRECATED & ARCHIVED**
+> This repository was the test suite for **ETL v1** (legacy). 
+> Active automated tests for **ETL v2** and the Keeper Data API have moved to:
+> 👉 **[`DEFRA/ls-keeper-data-api-tests`](https://github.com/DEFRA/ls-keeper-data-api-tests)**
+
+**keeper-data-bridge-tests**
 
 The template to create a service that runs WDIO tests against an environment.
 
